@@ -1,15 +1,16 @@
 import json
 import os
 from typing import List, Tuple
-import tick.hawkes as hk
+
 import numpy as np
-import pandas as pd 
+import pandas as pd
+import tick.hawkes as hk
 
 ORDERBOOK_DIRECTORY_PATH = '/home/davide/Desktop/phd/bitfinex-api-py/data/orderbook_changes/'
-HAWKES_DIRECTORY_PATH = '/home/davide/Desktop/phd/hawkes/data_090min_training'
+HAWKES_DIRECTORY_PATH = '/home/davide/Desktop/phd/hawkes/data_5min'
 DENSITY_FILE_PATH = '/home/davide/Desktop/phd/hawkes/data/file_densities_map.json'
 
-TRAINING_DURATION = pd.Timedelta(minutes=1, seconds=30)
+TRAINING_DURATION = pd.Timedelta(minutes=5, seconds=0)
 SIMULATION_DURATION = pd.Timedelta(minutes=2, seconds=0)
 PREDICTION_PERIOD_DURATION = pd.Timedelta(seconds=30)
 WARM_UP_PERIOD_DURATION = pd.Timedelta(minutes=2, seconds=30)
@@ -30,12 +31,16 @@ def get_preprocessed_df(df: pd.DataFrame, base_imbalance_orderbook_level: int) -
 
     return df
 
-def get_attack_times(timestamp_series: pd.Series, start_time_training: pd.Timestamp, end_time_simulation: pd.Timestamp) -> np.ndarray:
+def get_attack_times(
+    timestamp_series: pd.Series, start_time_training: pd.Timestamp, end_time_simulation: pd.Timestamp, prediction_period_duration: pd.Timedelta
+) -> np.ndarray:
     attack_times = pd.to_datetime(timestamp_series, unit='ms').to_numpy()
 
-    first_event_not_in_simulation = attack_times[attack_times > end_time_simulation][0]
+    end_time_simulation_with_offset = end_time_simulation + prediction_period_duration
+
+    first_event_not_in_simulation = attack_times[attack_times > end_time_simulation_with_offset][0]
     attack_times = attack_times[
-        (attack_times >= start_time_training) & (attack_times <= end_time_simulation)
+        (attack_times >= start_time_training) & (attack_times <= end_time_simulation_with_offset)
     ].copy()
     attack_times = np.append(attack_times, first_event_not_in_simulation)
 
@@ -107,8 +112,6 @@ def get_hawkes_results(
         ].copy()
         current_attack_times = current_attack_times - start_warm_up_period
 
-        real_next_event_timestamp = attack_times[attack_times > end_warm_up_period][0] - start_warm_up_period
-
         sim_hawkes = get_hawkes_simulation(
             current_attack_times, warm_up_period_duration_seconds, prediction_period_duration_seconds, abb, baa, caa
         )
@@ -120,6 +123,10 @@ def get_hawkes_results(
             else (end_warm_up_period - start_warm_up_period + prediction_period_duration_seconds)
         )
 
+        real_next_event_timestamp = get_nearest_value(
+            attack_times[attack_times > end_warm_up_period], predicted_next_event_timestamp + start_warm_up_period
+        ) - start_warm_up_period
+
         prediction_error = predicted_next_event_timestamp - real_next_event_timestamp
 
         simulation_results_map['start_time_simulation_timestamp'].append(current_start_time_simulation_timestamp)
@@ -129,6 +136,11 @@ def get_hawkes_results(
         simulation_results_map['intensity'].append(sim_hawkes.tracked_intensity[0][-1])
 
     return pd.DataFrame(simulation_results_map)
+
+def get_nearest_value(array: np.ndarray, value: float) -> float:
+    array = np.asarray(array)
+    idx = (np.abs(array - value)).argmin()
+    return array[idx]
 
 
 def get_hawkes_simulation(
@@ -250,6 +262,19 @@ def get_coe_testing_df_moving_average(
 
     return testing_df
 
+def get_index_positions_without_old_greater_predictions(series: pd.Series) -> pd.Series:
+    to_delete_index_positions = []
+    for i in range(0, len(series)):
+        for j in range(i+1, len(series)):
+            if series.iloc[i] > series.iloc[j]:
+                to_delete_index_positions.append(i)
+                break
+            
+    return to_delete_index_positions
+
+def get_dataframe_without_index_positions(df: pd.DataFrame, index_positions: List) -> pd.DataFrame:
+    return df.drop(df.index[index_positions])
+
 def get_coe_testing_df_naive(
     orderbook_df: pd.DataFrame,
     coe_training_start_time_timestamp_seconds: float,
@@ -345,7 +370,7 @@ if __name__ == '__main__':
     with open(DENSITY_FILE_PATH) as json_file:
         file_densities_map = json.load(json_file)
 
-    best_densities_file = pd.read_csv('/home/davide/Desktop/phd/hawkes/data/densities_table.csv')
+    best_densities_file = pd.read_csv('/home/davide/Desktop/phd/hawkes/data/best_densities_full.csv')
     best_densities_timestamps = best_densities_file['timestamp'].values.tolist()
     best_densities_timestamps = [str(x) for x in best_densities_timestamps]
     best_densities_hours = best_densities_file['timestamp_density'].values.tolist()
@@ -387,7 +412,10 @@ if __name__ == '__main__':
             try:
                 orderbook_df = pd.read_csv(filename_path, sep='\t')
                 orderbook_df = get_preprocessed_df(orderbook_df, BASE_IMBALANCE_ORDERBOOK_LEVEL)
-                attack_times = get_attack_times(orderbook_df['Timestamp'], start_time_training, end_time_simulation)
+                attack_times = get_attack_times(
+                    orderbook_df['Timestamp'], start_time_training,
+                    end_time_simulation, PREDICTION_PERIOD_DURATION
+                )
 
                 training_attack_times = get_training_attack_times(
                     attack_times, start_time_training_timestamp, start_time_simulation_timestamp
@@ -413,6 +441,15 @@ if __name__ == '__main__':
                     HAWKES_DIRECTORY_PATH,
                     filename_timestamp,
                     max_density_start_time_simulation_str,
+                    best_decays,
+                    'best_decays'
+                ) 
+
+
+                save_json_file(
+                    HAWKES_DIRECTORY_PATH,
+                    filename_timestamp,
+                    max_density_start_time_simulation_str,
                     intensities,
                     'intensities'
                 ) 
@@ -432,23 +469,23 @@ if __name__ == '__main__':
                     orderbook_df, hawkes_result_df, coe_training_start_time_timestamp
                 )
 
+                hawkes_testing_coe_index_positions = get_index_positions_without_old_greater_predictions(
+                    hawkes_testing_coe_df['Timestamp']
+                )
+                hawkes_testing_coe_df = get_dataframe_without_index_positions(
+                    hawkes_testing_coe_df, hawkes_testing_coe_index_positions
+                )
                 oracle_testing_coe_df = get_coe_testing_df_oracle(
                     orderbook_df, start_time_simulation_timestamp,
                     end_time_simulation_timestamp,
                     coe_training_start_time_timestamp
                 )
-
-                moving_average_testing_coe_df = get_coe_testing_df_moving_average(
-                    orderbook_df,
-                    coe_training_start_time_timestamp,
-                    start_time_simulation_timestamp,
-                    end_time_simulation_timestamp,
-                    MOVING_AVERAGE_WINDOW_SIZE_SECONDS
-                )
+                oracle_testing_coe_df.sort_values(by='Timestamp', inplace=True)
 
                 naive_testing_coe_df = get_coe_testing_df_naive(
                     orderbook_df, coe_training_start_time_timestamp, start_time_simulation_timestamp, end_time_simulation_timestamp
                 )
+                naive_testing_coe_df.sort_values(by='Timestamp', inplace=True)
 
                 save_complete_df(
                     HAWKES_DIRECTORY_PATH,
@@ -465,14 +502,6 @@ if __name__ == '__main__':
                     coe_training_df,
                     oracle_testing_coe_df,
                     f"oracle_BI{BASE_IMBALANCE_ORDERBOOK_LEVEL}"
-                )
-                save_complete_df(
-                    HAWKES_DIRECTORY_PATH,
-                    filename_timestamp,
-                    max_density_start_time_simulation_str,
-                    coe_training_df,
-                    moving_average_testing_coe_df,
-                    f"movingaverage_BI{BASE_IMBALANCE_ORDERBOOK_LEVEL}"
                 )
                 save_complete_df(
                     HAWKES_DIRECTORY_PATH,

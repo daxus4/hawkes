@@ -1,6 +1,8 @@
+import json
 import os
-import pandas as pd
 from typing import Dict, List, Tuple
+
+import pandas as pd
 
 SIMULATION_TIME_DURATION = pd.Timedelta('2min')
 STARTING_TIME_OFFSET = pd.Timedelta('30min')
@@ -123,3 +125,7 @@ if __name__ == "__main__":
             file_densities_map[orderbook_file_path] = get_local_max_density_groups_distanced(density_df, DISTANCE_TIME_FOR_MAX_DENSITY)
 
     save_densities_table(file_densities_map, 'data/densities_table.csv')
+
+    # save file_densities_map in json
+    with open('data/file_densities_map.json', 'w') as f:
+        json.dump(file_densities_map, f)
