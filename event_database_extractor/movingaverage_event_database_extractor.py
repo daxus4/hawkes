@@ -9,18 +9,14 @@ class MovingAverageEventDatabaseExtractor(EventDatabaseExtractor):
         self,
         orderbook_df: pd.DataFrame,
         start_time_simulation: pd.Timestamp,
-        end_time_simulation: pd.Timestamp,
         coe_training_duration: pd.Timedelta,
-        training_duration: pd.Timedelta,
         simulation_duration: pd.Timedelta,
         moving_average_window_size_seconds: int,
     ) -> None:
         super().__init__(
             orderbook_df,
             start_time_simulation,
-            end_time_simulation,
             coe_training_duration,
-            training_duration,
             simulation_duration
         )
 
@@ -57,7 +53,6 @@ class MovingAverageEventDatabaseExtractor(EventDatabaseExtractor):
             df_map['RealTimestampNotScaled'].append(nearest_timestamp)
 
         moving_average_df = pd.DataFrame(df_map)
-        moving_average_df['Timestamp'] = (moving_average_df['Timestamp']/1000 - self._coe_training_start_time_timestamp)
         return moving_average_df
 
 

@@ -17,22 +17,18 @@ class EventDatabaseExtractor(ABC):
         self,
         orderbook_df: pd.DataFrame,
         start_time_simulation: pd.Timestamp,
-        end_time_simulation: pd.Timestamp,
         coe_training_duration: pd.Timedelta,
-        training_duration: pd.Timedelta,
         simulation_duration: pd.Timedelta,
     ) -> None:
         self._orderbook_df = orderbook_df
+        
         self._start_time_simulation = start_time_simulation
-        self._start_time_simulation_str = self._start_time_simulation.strftime('%H%M%S')
-
         self._start_time_simulation_timestamp = self._start_time_simulation.timestamp()
 
-        self._start_time_training = self._start_time_simulation - training_duration
-        self._start_time_training_timestamp = self._start_time_training.timestamp()
+        self._simulation_duration = simulation_duration
 
         self._end_time_simulation = self._start_time_simulation + simulation_duration
-        self._end_time_simulation_timestamp = end_time_simulation.timestamp()
+        self._end_time_simulation_timestamp = self._end_time_simulation.timestamp()
 
         self._coe_training_start_time = self._start_time_simulation - coe_training_duration
         self._coe_training_start_time_timestamp = self._coe_training_start_time.timestamp()
@@ -43,8 +39,8 @@ class EventDatabaseExtractor(ABC):
         coe_training_start_time_timestamp_milliseconds = self._coe_training_start_time_timestamp * 1000
         coe_training_end_time_timestamp_milliseconds = self._start_time_simulation_timestamp * 1000
         df = self._orderbook_df[
-            (df['Timestamp'] >= coe_training_start_time_timestamp_milliseconds) & 
-            (df['Timestamp'] < coe_training_end_time_timestamp_milliseconds)
+            (self._orderbook_df['Timestamp'] >= coe_training_start_time_timestamp_milliseconds) & 
+            (self._orderbook_df['Timestamp'] < coe_training_end_time_timestamp_milliseconds)
         ].copy()
         df = df[['Timestamp', 'BaseImbalance', 'Return']].copy()
         df['Timestamp'] = (df['Timestamp'] - coe_training_start_time_timestamp_milliseconds) / 1000
@@ -68,15 +64,19 @@ class EventDatabaseExtractor(ABC):
             ['Timestamp_x', 'BaseImbalance', 'Return', 'RealTimestampNotScaled']
         ]
 
-        self._coe_test_df['RealTimestampNotScaled'] = (
-            self._coe_test_df['RealTimestampNotScaled'] / 1000
-        ) - self._coe_training_start_time_timestamp
         self._coe_test_df.rename(
             columns={
                 'Timestamp_x': 'Timestamp', "RealTimestampNotScaled": 'RealTimestamp'
             },
             inplace=True
         )
+
+        self._coe_test_df['Timestamp'] = (
+            self._coe_test_df['Timestamp'] / 1000
+        ) - self._coe_training_start_time_timestamp
+        self._coe_test_df['RealTimestamp'] = (
+            self._coe_test_df['RealTimestamp'] / 1000
+        ) - self._coe_training_start_time_timestamp
 
     def get_index_positions_without_old_greater_predictions(
         self,
@@ -92,7 +92,7 @@ class EventDatabaseExtractor(ABC):
         return to_delete_index_positions
 
     def get_dataframe_without_index_positions(
-        df: pd.DataFrame, index_positions: List
+        self, df: pd.DataFrame, index_positions: List
     ) -> pd.DataFrame:
         return df.drop(df.index[index_positions])
 
@@ -100,13 +100,13 @@ class EventDatabaseExtractor(ABC):
         self._compute_coe_training_df()
         self._compute_coe_test_df()
 
-        testing_coe_index_positions = self.get_index_positions_without_old_greater_predictions(
-            self._coe_test_df['Timestamp']
-        )
-        self._coe_test_df = self.get_dataframe_without_index_positions(
-            self._coe_test_df, testing_coe_index_positions
-        )
-        self._coe_test_df.sort_values(by='Timestamp', inplace=True)
+        # testing_coe_index_positions = self.get_index_positions_without_old_greater_predictions(
+        #     self._coe_test_df['Timestamp']
+        # )
+        # self._coe_test_df = self.get_dataframe_without_index_positions(
+        #     self._coe_test_df, testing_coe_index_positions
+        # )
+        # self._coe_test_df.sort_values(by='Timestamp', inplace=True)
         
         df = pd.concat([self._coe_training_df, self._coe_test_df])
         df['Timestamp'] = df['Timestamp'].round(3)

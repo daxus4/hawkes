@@ -102,8 +102,7 @@ def save_densities_table(config: Dict, file_path: str):
         df_map['timestamp'].extend([float(timestamp)] * num_densities)
 
         for info_density in v:
-            pd.Timestamp(info_density[0])
-            df_map['timestamp_density'].append(pd.Timestamp(info_density[0]).strftime('%H%M%S'))
+            df_map['timestamp_density'].append(int(pd.Timestamp(info_density[0]).timestamp()))
             df_map['density'].append(int(info_density[1]))
 
     df_map = pd.DataFrame(df_map)

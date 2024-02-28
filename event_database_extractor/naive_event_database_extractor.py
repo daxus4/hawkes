@@ -25,7 +25,6 @@ class NaiveEventDatabaseExtractor(EventDatabaseExtractor):
             testing_df_map['RealTimestamp'].append(self.get_nearest_value(df['Timestamp'], timestamp))
         
         testing_df = pd.DataFrame(testing_df_map)
-        testing_df['Timestamp'] = (testing_df['Timestamp']/ 1000) - self._coe_training_start_time_timestamp
         testing_df['RealTimestampNotScaled'] = testing_df['RealTimestamp']
 
         return testing_df

@@ -12,27 +12,25 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
         self,
         orderbook_df: pd.DataFrame,
         start_time_simulation: pd.Timestamp,
-        end_time_simulation: pd.Timestamp,
         coe_training_duration: pd.Timedelta,
-        training_duration: pd.Timedelta,
         simulation_duration: pd.Timedelta,
+        hawkes_training_duration: pd.Timedelta,
         prediction_period_duration: pd.Timedelta,
-        simulation_period_duration: pd.Timedelta,
         warm_up_period_duration: pd.Timedelta,
         best_decay: Optional[float] = None,
     ) -> None:
         super().__init__(
             orderbook_df,
             start_time_simulation,
-            end_time_simulation,
             coe_training_duration,
-            training_duration,
             simulation_duration
         )
 
+        self._start_time_training = self._start_time_simulation - hawkes_training_duration
+        self._start_time_training_timestamp = self._start_time_training.timestamp()
         self._prediction_period_duration = prediction_period_duration
         self._prediction_period_duration_seconds = prediction_period_duration.total_seconds()
-        self._simulation_period_duration_seconds = int(simulation_period_duration.total_seconds())
+        self._simulation_period_duration_seconds = int(self._simulation_duration.total_seconds())
         self._warm_up_period_duration_seconds = warm_up_period_duration.total_seconds()
 
         self._best_decay = best_decay
@@ -106,8 +104,8 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
         abb: float, baa: List[np.ndarray], caa:np.ndarray,
     ) -> pd.DataFrame:
         simulation_results_map = {
-            'real_next_event_timestamp': [],
-            'predicted_next_event_timestamp': [],
+            'Timestamp': [],
+            'RealTimestampNotScaled': [],
         }
 
         for i in range(self._simulation_period_duration_seconds):
@@ -122,10 +120,10 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
             current_attack_times = current_attack_times - start_warm_up_period
 
             sim_hawkes = self.get_hawkes_simulation(
-                current_attack_times, self._warm_up_period_duration_seconds, self._prediction_period_duration_seconds, abb, baa, caa
+                current_attack_times, self._warm_up_period_duration_seconds, abb, baa, caa
             )
 
-            predicted_timestamps = self.get_predicted_timestamps(sim_hawkes, self._warm_up_period_duration_seconds)
+            predicted_timestamps = self.get_predicted_timestamps(sim_hawkes)
             predicted_next_event_timestamp = (
                 predicted_timestamps[0]
                 if len(predicted_timestamps) > 0
@@ -136,10 +134,13 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
                 attack_times[attack_times > end_warm_up_period], predicted_next_event_timestamp + start_warm_up_period
             ) - start_warm_up_period
 
-            simulation_results_map['real_next_event_timestamp'].append(start_warm_up_period + real_next_event_timestamp)
-            simulation_results_map['predicted_next_event_timestamp'].append(start_warm_up_period + predicted_next_event_timestamp)
+            simulation_results_map['Timestamp'].append(start_warm_up_period + predicted_next_event_timestamp)
+            simulation_results_map['RealTimestampNotScaled'].append(start_warm_up_period + real_next_event_timestamp)
 
-        return pd.DataFrame(simulation_results_map)
+        df = pd.DataFrame(simulation_results_map)
+        df['Timestamp'] = (df['Timestamp'] * 1000).astype(int)
+        df['RealTimestampNotScaled'] = (df['RealTimestampNotScaled'] * 1000).astype(int)
+        return df
 
     def get_hawkes_simulation(
         self,
@@ -148,7 +149,7 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
         abb: float,
         baa: List[np.ndarray],
         caa:np.ndarray,
-        seed: int = 1039
+        seed: int = 1039,
     ) -> hk.SimuHawkesExpKernels:
         sim_hawkes = hk.SimuHawkesExpKernels(
             adjacency=caa, decays=baa, baseline=[abb], end_time=warm_up_period_duration, seed=seed
