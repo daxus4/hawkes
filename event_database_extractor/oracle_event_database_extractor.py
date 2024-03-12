@@ -15,6 +15,8 @@ class OracleEventDatabaseExtractor(EventDatabaseExtractor):
         testing_df = testing_df.groupby('SecondTimestamp').first().reset_index()
 
         testing_df.drop(columns=['SecondTimestamp'], inplace=True)
-        testing_df['RealTimestampNotScaled'] = testing_df['Timestamp']
+        testing_df['NearestEventTimestampNotScaled'] = testing_df['Timestamp']
+        testing_df['LastEventTimestampNotScaled'] = testing_df['Timestamp']
+        testing_df['RealNextEventTimestampNotScaled'] = testing_df['Timestamp']
 
         return testing_df

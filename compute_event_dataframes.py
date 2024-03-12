@@ -156,6 +156,16 @@ def _get_hawkes_submethod_value_decay_df_map(
                 df_path, sep='\t'
             )
 
+        hawkes_submethod_value_decay_df_map[parameter][
+            'timestamp'
+        ] = hawkes_submethod_value_decay_df_map[parameter]['timestamp'].astype(str)
+        hawkes_submethod_value_decay_df_map[parameter][
+            'timestamp_density'
+        ] = hawkes_submethod_value_decay_df_map[parameter]['timestamp_density'].astype(str)
+        hawkes_submethod_value_decay_df_map[parameter][
+            'decay'
+        ] = hawkes_submethod_value_decay_df_map[parameter]['decay'].astype(float)
+
     return hawkes_submethod_value_decay_df_map
 
 
@@ -175,8 +185,8 @@ def save_new_decay(
 
 def get_best_decay(
     hawkes_submethod_value_decay_df_map: Dict[str, pd.DataFrame],
-    timestamp_file: int,
-    timestamp_start_simulation: int,
+    timestamp_file: str,
+    timestamp_start_simulation: str,
     submethod_value: int
 ) -> Optional[float]:
     df = hawkes_submethod_value_decay_df_map[submethod_value]
@@ -197,6 +207,7 @@ if __name__ == '__main__':
     densities_file_path = config_map['densities_file_path']
     method_names = config_map['methods']
     base_imbalance_level = config_map['base_imbalance_level']
+    use_near_event_timestamp_for_returns = config_map['use_near_event_timestamp_for_returns']
 
     methods: List[Method] = [
         Method.from_conf(method, config_map) for method in method_names
@@ -242,10 +253,13 @@ if __name__ == '__main__':
                     start_time_simulation = pd.Timestamp(timestamp_start_simulation, unit='s')
 
                     if method.name == HAWKES_METHOD_STR:
+                        timestamp_file_str = str(timestamp_file)
+                        timestamp_start_simulation_str = str(timestamp_start_simulation)
+
                         best_decay = get_best_decay(
                             hawkes_submethod_value_decay_df_map,
-                            timestamp_file,
-                            timestamp_start_simulation,
+                            timestamp_file_str,
+                            timestamp_start_simulation_str,
                             submethod_value
                         )
 
@@ -285,7 +299,9 @@ if __name__ == '__main__':
                             SIMULATION_DURATION,
                         )
 
-                    complete_coe_df = event_database_extractor.get_complete_coe_df()
+                    complete_coe_df = event_database_extractor.get_complete_coe_df(
+                        use_near_event_timestamp_for_returns=use_near_event_timestamp_for_returns
+                    )
 
                     complete_coe_df.to_csv(
                         os.path.join(DATA_DIRECTORY, submethod_folder, completed_coe_df_filename),
@@ -297,23 +313,26 @@ if __name__ == '__main__':
                         decay_df = hawkes_submethod_value_decay_df_map[submethod_value]
 
                         row = decay_df.loc[
-                            (decay_df['timestamp'] == timestamp_file) &
-                            (decay_df['timestamp_density'] == timestamp_start_simulation)
+                            (decay_df['timestamp'] == timestamp_file_str) &
+                            (decay_df['timestamp_density'] == timestamp_start_simulation_str)
                         ]
 
                         if row.empty:
-                            decay_df = decay_df.append(
-                                {
-                                    'timestamp': timestamp_file,
-                                    'timestamp_density': timestamp_start_simulation,
-                                    'decay': new_decay,
-                                },
-                                ignore_index=True,
-                            )
+                            decay_df = pd.concat([
+                                decay_df,
+                                pd.DataFrame(
+                                    {
+                                        'timestamp': [timestamp_file_str],
+                                        'timestamp_density': [timestamp_start_simulation_str],
+                                        'decay': [new_decay],
+                                    }
+                                )
+                            ])
+                            hawkes_submethod_value_decay_df_map[submethod_value] = decay_df
                         else:
                             decay_df.loc[
-                                (decay_df['timestamp'] == timestamp_file) &
-                                (decay_df['timestamp_density'] == timestamp_start_simulation),
+                                (decay_df['timestamp'] == timestamp_file_str) &
+                                (decay_df['timestamp_density'] == timestamp_start_simulation_str),
                                 'decay'
                             ] = new_decay
 

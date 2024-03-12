@@ -105,7 +105,9 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
     ) -> pd.DataFrame:
         simulation_results_map = {
             'Timestamp': [],
-            'RealTimestampNotScaled': [],
+            'NearestEventTimestampNotScaled': [],
+            'LastEventTimestampNotScaled': [],
+            'RealNextEventTimestampNotScaled': [],
         }
 
         for i in range(self._simulation_period_duration_seconds):
@@ -130,16 +132,31 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
                 else (end_warm_up_period - start_warm_up_period + self._prediction_period_duration_seconds)
             )
 
-            real_next_event_timestamp = self.get_nearest_value(
-                attack_times[attack_times > end_warm_up_period], predicted_next_event_timestamp + start_warm_up_period
+            nearest_event_timestamp = self.get_nearest_value(
+                attack_times, predicted_next_event_timestamp + start_warm_up_period
+            ) - start_warm_up_period
+
+            last_event_timestamp = self.get_last_value(
+                attack_times, end_warm_up_period
+            ) - start_warm_up_period
+
+            real_next_event_timestamp = self.get_next_value(
+                attack_times, end_warm_up_period
             ) - start_warm_up_period
 
             simulation_results_map['Timestamp'].append(start_warm_up_period + predicted_next_event_timestamp)
-            simulation_results_map['RealTimestampNotScaled'].append(start_warm_up_period + real_next_event_timestamp)
+            simulation_results_map['NearestEventTimestampNotScaled'].append(start_warm_up_period + nearest_event_timestamp)
+            simulation_results_map['LastEventTimestampNotScaled'].append(start_warm_up_period + last_event_timestamp)
+            simulation_results_map['RealNextEventTimestampNotScaled'].append(start_warm_up_period + real_next_event_timestamp)
+
 
         df = pd.DataFrame(simulation_results_map)
+        
         df['Timestamp'] = (df['Timestamp'] * 1000).astype(int)
-        df['RealTimestampNotScaled'] = (df['RealTimestampNotScaled'] * 1000).astype(int)
+        df['NearestEventTimestampNotScaled'] = (df['NearestEventTimestampNotScaled'] * 1000).astype(int)
+        df['LastEventTimestampNotScaled'] = (df['LastEventTimestampNotScaled'] * 1000).astype(int)
+        df['RealNextEventTimestampNotScaled'] = (df['RealNextEventTimestampNotScaled'] * 1000).astype(int)
+
         return df
 
     def get_hawkes_simulation(
