@@ -7,7 +7,8 @@ import pandas as pd
 SIMULATION_TIME_DURATION = pd.Timedelta('2min')
 STARTING_TIME_OFFSET = pd.Timedelta('30min')
 DISTANCE_TIME_FOR_MAX_DENSITY = pd.Timedelta('35min')
-PATH_ORDERBOOK_DIRECTORY = '/home/davide/Desktop/phd/bitfinex-api-py/data/orderbook_changes/'
+PATH_ORDERBOOK_DIRECTORY = '/home/davide/Desktop/phd/bitfinex-api-py/data/{}/orderbook_changes/'
+MARKETS = ['BTC_USDT', 'ETH_BTC', 'ETH_USD', 'ETH_USDT']
 
 def get_rounded_timestamp_series(timestamp_series: pd.Series, round_to: str):
     return timestamp_series.dt.round(round_to)
@@ -113,18 +114,21 @@ def save_densities_table(config: Dict, file_path: str):
 
 
 if __name__ == "__main__":
-    file_densities_map = dict()
+    for market in MARKETS:
+        path_orderbook_directory = PATH_ORDERBOOK_DIRECTORY.format(market)
 
-    for orderbook_file_path in get_files(PATH_ORDERBOOK_DIRECTORY):
-        df_btc = pd.read_csv(os.path.join(PATH_ORDERBOOK_DIRECTORY, orderbook_file_path), sep='\t')
-        df_btc = get_preprocessed_orderbook_df(df_btc, STARTING_TIME_OFFSET, SIMULATION_TIME_DURATION)
+        file_densities_map = dict()
 
-        if not df_btc.empty:
-            density_df = get_density_df(df_btc, 'Timestamp', SIMULATION_TIME_DURATION, '1s')
-            file_densities_map[orderbook_file_path] = get_local_max_density_groups_distanced(density_df, DISTANCE_TIME_FOR_MAX_DENSITY)
+        for orderbook_file_path in get_files(path_orderbook_directory):
+            df_btc = pd.read_csv(os.path.join(path_orderbook_directory, orderbook_file_path), sep='\t')
+            df_btc = get_preprocessed_orderbook_df(df_btc, STARTING_TIME_OFFSET, SIMULATION_TIME_DURATION)
 
-    save_densities_table(file_densities_map, 'data/densities_table.csv')
+            if not df_btc.empty:
+                density_df = get_density_df(df_btc, 'Timestamp', SIMULATION_TIME_DURATION, '1s')
+                file_densities_map[orderbook_file_path] = get_local_max_density_groups_distanced(density_df, DISTANCE_TIME_FOR_MAX_DENSITY)
 
-    # save file_densities_map in json
-    with open('data/file_densities_map.json', 'w') as f:
-        json.dump(file_densities_map, f)
+        save_densities_table(file_densities_map, f'data_{market}/densities_table.csv')
+
+        # save file_densities_map in json
+        with open(f'data_{market}/file_densities_map.json', 'w') as f:
+            json.dump(file_densities_map, f)

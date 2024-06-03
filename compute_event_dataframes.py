@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import yaml
@@ -10,6 +10,7 @@ from constants import (
     MOVING_AVERAGE_METHOD_STR,
     NAIVE_METHOD_STR,
     ORACLE_METHOD_STR,
+    POISSON_METHOD_STR,
 )
 from event_database_extractor.hawkes_event_database_extractor import (
     HawkesEventDatabaseExtractor,
@@ -23,9 +24,12 @@ from event_database_extractor.naive_event_database_extractor import (
 from event_database_extractor.oracle_event_database_extractor import (
     OracleEventDatabaseExtractor,
 )
+from event_database_extractor.poisson_event_database_extractor import (
+    PoissonEventDatabaseExtractor,
+)
 from method import Method
 
-CONF_FILE_PATH = 'data/conf_event_df.yml'
+CONF_FILE_PATH = os.path.join(DATA_DIRECTORY, 'conf_event_df.yml')
 
 SIMULATION_DURATION = pd.Timedelta(minutes=2, seconds=0)
 COE_TRAINING_DURATION = pd.Timedelta(minutes=30, seconds=0)
@@ -149,7 +153,7 @@ def _get_hawkes_submethod_value_decay_df_map(
 
         if not os.path.exists(df_path):
             hawkes_submethod_value_decay_df_map[parameter] = pd.DataFrame(
-                columns=['timestamp', 'timestamp_density', 'decay']
+                columns=['timestamp', 'timestamp_density', 'baseline', 'alpha', 'decay']
             )
         else:
             hawkes_submethod_value_decay_df_map[parameter] = pd.read_csv(
@@ -162,6 +166,12 @@ def _get_hawkes_submethod_value_decay_df_map(
         hawkes_submethod_value_decay_df_map[parameter][
             'timestamp_density'
         ] = hawkes_submethod_value_decay_df_map[parameter]['timestamp_density'].astype(str)
+        hawkes_submethod_value_decay_df_map[parameter][
+            'baseline'
+        ] = hawkes_submethod_value_decay_df_map[parameter]['baseline'].astype(float)
+        hawkes_submethod_value_decay_df_map[parameter][
+            'alpha'
+        ] = hawkes_submethod_value_decay_df_map[parameter]['alpha'].astype(float)
         hawkes_submethod_value_decay_df_map[parameter][
             'decay'
         ] = hawkes_submethod_value_decay_df_map[parameter]['decay'].astype(float)
@@ -183,12 +193,12 @@ def save_new_decay(
         index=False,
     )
 
-def get_best_decay(
+def get_best_hawkes_parameters(
     hawkes_submethod_value_decay_df_map: Dict[str, pd.DataFrame],
     timestamp_file: str,
     timestamp_start_simulation: str,
     submethod_value: int
-) -> Optional[float]:
+) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     df = hawkes_submethod_value_decay_df_map[submethod_value]
 
     row = df.loc[
@@ -197,8 +207,18 @@ def get_best_decay(
     ]
 
     if row.empty:
+        return None, None, None
+    
+    return (
+        get_none_if_nan(row['baseline'].values[0]),
+        get_none_if_nan(row['alpha'].values[0]),
+        get_none_if_nan(row['decay'].values[0])
+    )
+
+def get_none_if_nan(value: Any) -> Optional[Any]:
+    if pd.isna(value):
         return None
-    return row['decay'].values[0]
+    return value
 
 if __name__ == '__main__':
     config_map = get_conf(CONF_FILE_PATH)
@@ -256,7 +276,7 @@ if __name__ == '__main__':
                         timestamp_file_str = str(timestamp_file)
                         timestamp_start_simulation_str = str(timestamp_start_simulation)
 
-                        best_decay = get_best_decay(
+                        best_baseline, best_alpha, best_decay = get_best_hawkes_parameters(
                             hawkes_submethod_value_decay_df_map,
                             timestamp_file_str,
                             timestamp_start_simulation_str,
@@ -273,6 +293,18 @@ if __name__ == '__main__':
                             warm_up_period_duration=HAWKES_WARM_UP_PERIOD_DURATION,
                             best_decay=best_decay,
                         )
+
+                    if method.name == POISSON_METHOD_STR:
+                        event_database_extractor = PoissonEventDatabaseExtractor(
+                            orderbook_df,
+                            start_time_simulation,
+                            COE_TRAINING_DURATION,
+                            SIMULATION_DURATION,
+                            point_process_training_duration=pd.Timedelta(minutes=submethod_value),
+                            prediction_period_duration=HAWKES_PREDICTION_PERIOD_DURATION,
+                            warm_up_period_duration=HAWKES_WARM_UP_PERIOD_DURATION,
+                        )
+
 
                     if method.name == MOVING_AVERAGE_METHOD_STR:
                         event_database_extractor = MovingAverageEventDatabaseExtractor(
@@ -309,6 +341,8 @@ if __name__ == '__main__':
                     )
 
                     if method.name == HAWKES_METHOD_STR:
+                        new_baseline = event_database_extractor.best_baseline
+                        new_alpha = event_database_extractor.best_alpha
                         new_decay = event_database_extractor.best_decay
                         decay_df = hawkes_submethod_value_decay_df_map[submethod_value]
 
@@ -324,12 +358,24 @@ if __name__ == '__main__':
                                     {
                                         'timestamp': [timestamp_file_str],
                                         'timestamp_density': [timestamp_start_simulation_str],
+                                        'baseline': [new_baseline],
+                                        'alpha': [new_alpha],
                                         'decay': [new_decay],
                                     }
                                 )
                             ])
                             hawkes_submethod_value_decay_df_map[submethod_value] = decay_df
                         else:
+                            decay_df.loc[
+                                (decay_df['timestamp'] == timestamp_file_str) &
+                                (decay_df['timestamp_density'] == timestamp_start_simulation_str),
+                                'baseline'
+                            ] = new_baseline
+                            decay_df.loc[
+                                (decay_df['timestamp'] == timestamp_file_str) &
+                                (decay_df['timestamp_density'] == timestamp_start_simulation_str),
+                                'alpha'
+                            ] = new_alpha
                             decay_df.loc[
                                 (decay_df['timestamp'] == timestamp_file_str) &
                                 (decay_df['timestamp_density'] == timestamp_start_simulation_str),

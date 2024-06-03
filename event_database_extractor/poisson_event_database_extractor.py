@@ -7,19 +7,16 @@ import tick.hawkes as hk
 from event_database_extractor.event_database_extractor import EventDatabaseExtractor
 
 
-class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
+class PoissonEventDatabaseExtractor(EventDatabaseExtractor):
     def __init__(
         self,
         orderbook_df: pd.DataFrame,
         start_time_simulation: pd.Timestamp,
         coe_training_duration: pd.Timedelta,
         simulation_duration: pd.Timedelta,
-        hawkes_training_duration: pd.Timedelta,
+        point_process_training_duration: pd.Timedelta,
         prediction_period_duration: pd.Timedelta,
         warm_up_period_duration: pd.Timedelta,
-        best_baseline: Optional[float] = None,
-        best_alpha: Optional[float] = None,
-        best_decay: Optional[float] = None,
     ) -> None:
         super().__init__(
             orderbook_df,
@@ -28,16 +25,12 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
             simulation_duration
         )
 
-        self._start_time_training = self._start_time_simulation - hawkes_training_duration
+        self._start_time_training = self._start_time_simulation - point_process_training_duration
         self._start_time_training_timestamp = self._start_time_training.timestamp()
         self._prediction_period_duration = prediction_period_duration
         self._prediction_period_duration_seconds = prediction_period_duration.total_seconds()
         self._simulation_period_duration_seconds = int(self._simulation_duration.total_seconds())
         self._warm_up_period_duration_seconds = warm_up_period_duration.total_seconds()
-
-        self._best_baseline = best_baseline
-        self._best_alpha = best_alpha
-        self._best_decay = best_decay
 
     def get_attack_times(
         self, 
@@ -66,46 +59,16 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
             attack_times <= self._start_time_simulation_timestamp
         ] - self._start_time_training_timestamp
 
-    def get_best_decays_with_cross_validation(
-        self, attack_times: np.ndarray, min_beta: float = 0.01, max_beta: float = 100.0
-    ) -> float:
-        beta_values = np.linspace(min_beta, max_beta, num=3000)
-
-        best_beta = None
-        best_score = float('-inf')
-
-        #  cross validation per trovare il miglior beta
-        for beta in beta_values:
-            decays = np.array([[beta]])
-            hawkes_model = hk.HawkesExpKern(decays=decays)
-            hawkes_model.fit([attack_times])
-            score = hawkes_model.score([attack_times])
-            if score > best_score:
-                best_score = score
-                best_beta = beta
-        
-        return best_beta
-
     def get_hawkes_parameters_trained(
         self,
         attack_times: np.ndarray,
-        decays: float = 0.06162109, 
-    ) -> Tuple[float, List[np.ndarray], np.ndarray]:
-        hawkes = hk.HawkesExpKern(decays=decays)
-        hawkes.fit([attack_times])
-
-        baseline = hawkes.baseline
-        adjacency = hawkes.adjacency
-        abb=baseline[0]
-        baa= [np.array([decays])]
-        caa=np.array([[adjacency[0,0]]])
-
-        return abb, baa, caa
-
+    ) -> float:
+        return (attack_times.max() - attack_times.min()) / len(attack_times)
+    
     def get_hawkes_results(
         self,
         attack_times: np.ndarray,
-        abb: float, baa: List[np.ndarray], caa:np.ndarray,
+        intensity: float
     ) -> pd.DataFrame:
         simulation_results_map = {
             'Timestamp': [],
@@ -126,7 +89,7 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
             current_attack_times = current_attack_times - start_warm_up_period
 
             sim_hawkes = self.get_hawkes_simulation(
-                current_attack_times, self._warm_up_period_duration_seconds, abb, baa, caa
+                current_attack_times, self._warm_up_period_duration_seconds, intensity
             )
 
             predicted_timestamps = self.get_predicted_timestamps(sim_hawkes)
@@ -168,12 +131,10 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
         attack_times: np.ndarray,
         warm_up_period_duration: float,
         abb: float,
-        baa: List[np.ndarray],
-        caa:np.ndarray,
         seed: int = 1039,
     ) -> hk.SimuHawkesExpKernels:
         sim_hawkes = hk.SimuHawkesExpKernels(
-            adjacency=caa, decays=baa, baseline=[abb], end_time=warm_up_period_duration, seed=seed
+            adjacency=np.array([[0]]), decays=[np.array([0])], baseline=[abb], end_time=warm_up_period_duration, seed=seed
         )
         sim_hawkes.track_intensity(1)
 
@@ -202,34 +163,11 @@ class HawkesEventDatabaseExtractor(EventDatabaseExtractor):
         training_attack_times = self.get_training_attack_times(
             attack_times
         )
-        if self._best_decay is None:
-            self._best_decay = self.get_best_decays_with_cross_validation(training_attack_times)
-
-        abb, baa, caa = self.get_hawkes_parameters_trained(training_attack_times, self._best_decay)
-        if self._best_baseline is None:
-            self._best_baseline = abb
-        else:
-            abb = self._best_baseline
-
-        if self._best_alpha is None:
-            self._best_alpha = caa[0][0]
-        else:
-            baa = np.array([[self._best_alpha]])
+            
+        intensity = self.get_hawkes_parameters_trained(training_attack_times)
 
         hawkes_result_df = self.get_hawkes_results(
-            attack_times, abb, baa, caa,
+            attack_times, intensity
         )
 
         return hawkes_result_df
-
-    @property
-    def best_baseline(self) -> float:
-        return self._best_baseline
-    
-    @property
-    def best_alpha(self) -> float:
-        return self._best_alpha
-
-    @property
-    def best_decay(self) -> float:
-        return self._best_decay
